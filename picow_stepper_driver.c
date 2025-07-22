@@ -1,0 +1,38 @@
+#include "pico/stdlib.h"
+#include "tmc2208/tmc2208.h"
+
+// --- Configuración ---
+// Define los pines GPIO que vas a usar
+#define MOTOR_STEP_PIN 14
+#define MOTOR_DIR_PIN  15
+#define MOTOR_ENA_PIN  16
+
+// Define los parámetros de tu motor
+#define MOTOR_STEPS_PER_REV 200
+#define MOTOR_MICROSTEPS    32
+
+int main() {
+    stdio_init_all();
+
+    // Crear una instancia de la estructura del motor
+    TMC2208_t motor1;
+
+    // Inicializar el motor con los pines y parámetros definidos
+    tmc2208_init(&motor1, MOTOR_STEP_PIN, MOTOR_DIR_PIN, MOTOR_ENA_PIN, MOTOR_STEPS_PER_REV, MOTOR_MICROSTEPS);
+    sleep_ms(1000); // Espera para asegurar que el motor esté listo
+    // Habilitar el motor
+    tmc2208_enable(&motor1, true);
+
+    // tmc2208_set_direction(&motor1, true);
+    // tmc2208_set_rpm(&motor1, 60);
+
+    while (1) {
+        // Girar en una dirección a 60 RPM por 5 segundos
+        tmc2208_set_direction(&motor1, true);
+        tmc2208_send_nsteps_at_freq(&motor1, 10, 20.0f); // Enviar 500 pasos a 1000 Hz
+
+        sleep_ms(1000);
+    }
+
+    return 0;
+}
