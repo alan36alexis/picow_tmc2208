@@ -129,37 +129,16 @@ void tmc2208_stop_and_disable(TMC2208_t *motor) {
     motor->mode = TMC2208_MODE_STANDBY_HOLD;
 }
 
-/**
- * TODO: Implementar una función para girar un número específico de vueltas a una velocidad dada.
- * Esta funcion puede servir de esqueleto para una futura implementación.
- */
-void tmc2208_set_turns_at_rpm(TMC2208_t *motor, float rpm, int turns) {
-    // Cancelar cualquier temporizador anterior
-    cancel_repeating_timer(&motor->timer_to_steps);
+void tmc2208_set_turns_at_rpm(TMC2208_t *motor, float rpm, float turns) {
+    // Calcular el número total de micropasos para las vueltas deseadas
+    uint64_t total_microsteps = (uint64_t)(turns * motor->steps_per_rev * motor->microsteps);
 
-    // Si RPM es 0 o negativo, el motor se detiene
-    if (rpm <= 0 || turns <= 0) {
-        gpio_put(motor->step_pin, 0); // Asegurar que el pin STEP quede en bajo
-        return;
-    }
-
-    // Calcular la frecuencia de pulso en Hz
-    float pulse_freq = (rpm / 60.0f) * motor->steps_per_rev * motor->microsteps;
-
-    // El temporizador debe alternar el pin, por lo que su frecuencia es el doble
-    long delay_us = (long)(1000000.0f / (2.0f * pulse_freq));
-
-    // Validar que el delay no sea demasiado corto para el sistema
-    if (delay_us < 2) {
-        printf("Error: RPM muy altas, el delay del timer es demasiado corto.\n");
-        return;
-    }
-
-    // Crear un nuevo temporizador repetitivo
-    add_repeating_timer_us(-delay_us, repeating_timer_callback, NULL, &motor->timer_to_steps);
+    // Llamar a la función para enviar un número específico de pasos a una frecuencia calculada
+    // La frecuencia se calcula a partir de las RPM deseadas
+    float freq = (rpm / 60.0f) * motor->steps_per_rev * motor->microsteps;
+    tmc2208_send_nsteps_at_freq(motor, total_microsteps, freq);
 }
 
-//Funciones para testear el driver y el motor
 void tmc2208_send_nsteps_at_freq(TMC2208_t *motor, int nsteps, float freq) {
     // Cancelar cualquier temporizador anterior
     cancel_repeating_timer(&motor->timer_to_steps);

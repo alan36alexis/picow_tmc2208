@@ -73,6 +73,15 @@ void tmc2208_set_direction(TMC2208_t *motor, bool direction);
 void tmc2208_set_rpm(TMC2208_t *motor, float rpm);
 
 /**
+ * @brief Gira el motor un número específico de vueltas a una velocidad dada en RPM.
+ *
+ * @param motor Puntero a la estructura del motor.
+ * @param rpm Velocidad deseada en Revoluciones Por Minuto.
+ * @param turns Número de vueltas a girar.
+ */
+void tmc2208_set_turns_at_rpm(TMC2208_t *motor, float rpm, float turns);
+
+/**
  * @brief Detiene el motor, cancela el timer y pone en LOW el pin de step.
  *
  * @param motor Puntero a la estructura del motor.
