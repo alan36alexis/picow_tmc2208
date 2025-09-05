@@ -1,9 +1,11 @@
 #include "tmc2208.h"
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
+#include "hardware/uart.h"
 #include "pico/stdlib.h"
-
+#include "pico/time.h"
 #include <stdio.h>
+#include <string.h>
 
 // Puntero global para ser usado por el callback del timer.
 // Limitación: Este diseño simple solo permite controlar un motor.
@@ -38,7 +40,7 @@ bool repeating_timer_callback(struct repeating_timer *t) {
     return false; // Detener si el puntero no es válido
 }
 
-void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps) {
+void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps, uart_inst_t *uart_instance, uint8_t uart_tx_pin, uint8_t uart_rx_pin, uint8_t uart_address) {
     // Guardar la configuración en la estructura
     motor->step_pin = step_pin;
     motor->dir_pin = dir_pin;
@@ -46,6 +48,12 @@ void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t e
     motor->steps_per_rev = steps_per_rev;
     motor->microsteps = microsteps;
     motor->alarm_id = -1; // Inicialmente no hay temporizador activo
+
+    // Configuración UART
+    motor->uart_instance = uart_instance;
+    motor->uart_tx_pin = uart_tx_pin;
+    motor->uart_rx_pin = uart_rx_pin;
+    motor->uart_address = uart_address;
 
     // Asignar el puntero para el callback
     _motor_ptr_for_callback = motor;
@@ -57,6 +65,11 @@ void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t e
     gpio_set_dir(motor->dir_pin, GPIO_OUT);
     gpio_init(motor->enable_pin);
     gpio_set_dir(motor->enable_pin, GPIO_OUT);
+
+    // Inicializar UART si se proporcionó una instancia válida
+    if (motor->uart_instance != NULL) {
+        tmc2208_uart_init(motor);
+    }
 
     // Por defecto, el driver está deshabilitado (ENA a nivel alto)
     tmc2208_enable(motor, false);
@@ -165,4 +178,232 @@ void tmc2208_send_nsteps_at_freq(TMC2208_t *motor, int nsteps, float freq) {
 
     // Crear un nuevo temporizador repetitivo
     add_repeating_timer_us(-delay_us, repeating_timer_callback, NULL, &motor->timer_to_steps);
+}
+
+// Funciones UART para configuración avanzada
+
+/**
+ * @brief Calcula el CRC8 para comunicación UART con TMC2208
+ */
+static uint8_t tmc2208_calculate_crc8(uint8_t *data, uint8_t length) {
+    uint8_t crc = 0;
+    for (uint8_t i = 0; i < length; i++) {
+        uint8_t byte = data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            if ((crc ^ byte) & 0x01) {
+                crc = (crc >> 1) ^ 0x8C;
+            } else {
+                crc = crc >> 1;
+            }
+            byte = byte >> 1;
+        }
+    }
+    return crc;
+}
+
+/**
+ * @brief Construye un paquete UART para comunicación con TMC2208
+ */
+static void tmc2208_build_uart_packet(uint8_t address, uint8_t register_addr, uint32_t data, bool read, uint8_t *packet) {
+    packet[0] = 0x05; // SYNC byte
+    packet[1] = (address & 0x03) | (read ? 0x80 : 0x00); // Address + R/W bit
+    packet[2] = register_addr; // Register address
+    packet[3] = (data >> 24) & 0xFF; // Data MSB
+    packet[4] = (data >> 16) & 0xFF;
+    packet[5] = (data >> 8) & 0xFF;
+    packet[6] = data & 0xFF; // Data LSB
+    packet[7] = tmc2208_calculate_crc8(packet, 7); // CRC
+}
+
+bool tmc2208_uart_init(TMC2208_t *motor) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    // Configurar pines UART
+    gpio_set_function(motor->uart_tx_pin, GPIO_FUNC_UART);
+    gpio_set_function(motor->uart_rx_pin, GPIO_FUNC_UART);
+
+    // Inicializar UART
+    uart_init(motor->uart_instance, TMC2208_UART_BAUD_RATE);
+    uart_set_hw_flow(motor->uart_instance, false, false);
+    uart_set_format(motor->uart_instance, 8, 1, UART_PARITY_NONE);
+
+    // Pequeña pausa para estabilización
+    sleep_ms(10);
+
+    return true;
+}
+
+bool tmc2208_uart_read_register(TMC2208_t *motor, uint8_t register_address, uint32_t *data) {
+    if (motor->uart_instance == NULL || data == NULL) {
+        return false;
+    }
+
+    uint8_t packet[8];
+    uint8_t response[8];
+    
+    // Construir paquete de lectura
+    tmc2208_build_uart_packet(motor->uart_address, register_address, 0, true, packet);
+    
+    // Enviar paquete
+    for (int i = 0; i < 8; i++) {
+        uart_putc_raw(motor->uart_instance, packet[i]);
+    }
+    
+    // Esperar respuesta (timeout de 100ms)
+    uint32_t timeout = 100000; // 100ms en microsegundos
+    uint32_t start_time = time_us_32();
+    uint8_t bytes_received = 0;
+    
+    while (bytes_received < 8 && (time_us_32() - start_time) < timeout) {
+        if (uart_is_readable(motor->uart_instance)) {
+            response[bytes_received] = uart_getc(motor->uart_instance);
+            bytes_received++;
+        }
+    }
+    
+    if (bytes_received != 8) {
+        return false; // Timeout o datos incompletos
+    }
+    
+    // Verificar CRC
+    uint8_t calculated_crc = tmc2208_calculate_crc8(response, 7);
+    if (calculated_crc != response[7]) {
+        return false; // CRC incorrecto
+    }
+    
+    // Extraer datos
+    *data = ((uint32_t)response[3] << 24) | 
+            ((uint32_t)response[4] << 16) | 
+            ((uint32_t)response[5] << 8) | 
+            response[6];
+    
+    return true;
+}
+
+bool tmc2208_uart_write_register(TMC2208_t *motor, uint8_t register_address, uint32_t data) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    uint8_t packet[8];
+    
+    // Construir paquete de escritura
+    tmc2208_build_uart_packet(motor->uart_address, register_address, data, false, packet);
+    
+    // Enviar paquete
+    for (int i = 0; i < 8; i++) {
+        uart_putc_raw(motor->uart_instance, packet[i]);
+    }
+    
+    // Pequeña pausa para procesamiento
+    sleep_ms(1);
+    
+    return true;
+}
+
+bool tmc2208_set_microstepping(TMC2208_t *motor, TMC2208_Microsteps_t microsteps) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    uint32_t chopconf;
+    
+    // Leer registro CHOPCONF actual
+    if (!tmc2208_uart_read_register(motor, TMC2208_REG_CHOPCONF, &chopconf)) {
+        return false;
+    }
+    
+    // Limpiar bits de microstepping y establecer nuevo valor
+    chopconf &= ~TMC2208_CHOPCONF_MRES_MASK;
+    chopconf |= (microsteps & TMC2208_CHOPCONF_MRES_MASK);
+    
+    // Escribir registro modificado
+    if (!tmc2208_uart_write_register(motor, TMC2208_REG_CHOPCONF, chopconf)) {
+        return false;
+    }
+    
+    // Actualizar valor en la estructura
+    motor->microsteps = (1 << microsteps);
+    
+    return true;
+}
+
+bool tmc2208_set_currents(TMC2208_t *motor, uint8_t irun, uint8_t ihold, uint8_t ihold_delay) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    // Validar parámetros
+    if (irun > 31 || ihold > 31 || ihold_delay > 15) {
+        return false;
+    }
+    
+    // Construir valor del registro IHOLD_IRUN
+    uint32_t ihold_irun = (ihold_delay << TMC2208_IHOLD_IRUN_IHOLDDELAY_SHIFT) |
+                          (irun << TMC2208_IHOLD_IRUN_IRUN_SHIFT) |
+                          (ihold << TMC2208_IHOLD_IRUN_IHOLD_SHIFT);
+    
+    // Escribir registro
+    return tmc2208_uart_write_register(motor, TMC2208_REG_IHOLD_IRUN, ihold_irun);
+}
+
+bool tmc2208_set_tpowerdown(TMC2208_t *motor, uint8_t tpowerdown) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    // Escribir registro TPOWERDOWN
+    return tmc2208_uart_write_register(motor, TMC2208_REG_TPOWERDOWN, tpowerdown);
+}
+
+bool tmc2208_uart_enable(TMC2208_t *motor, bool enable) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    uint32_t gconf;
+    
+    // Leer registro GCONF actual
+    if (!tmc2208_uart_read_register(motor, TMC2208_REG_GCONF, &gconf)) {
+        return false;
+    }
+    
+    // Modificar bit de habilitación (bit 0)
+    if (enable) {
+        gconf |= 0x01; // Habilitar driver
+    } else {
+        gconf &= ~0x01; // Deshabilitar driver
+    }
+    
+    // Escribir registro modificado
+    return tmc2208_uart_write_register(motor, TMC2208_REG_GCONF, gconf);
+}
+
+bool tmc2208_get_status(TMC2208_t *motor, uint32_t *gstat) {
+    if (motor->uart_instance == NULL || gstat == NULL) {
+        return false;
+    }
+
+    return tmc2208_uart_read_register(motor, TMC2208_REG_GSTAT, gstat);
+}
+
+bool tmc2208_configure_all(TMC2208_t *motor, TMC2208_Microsteps_t microsteps, uint8_t irun, uint8_t ihold, uint8_t ihold_delay, uint8_t tpowerdown) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    bool success = true;
+    
+    // Configurar microstepping
+    success &= tmc2208_set_microstepping(motor, microsteps);
+    
+    // Configurar corrientes
+    success &= tmc2208_set_currents(motor, irun, ihold, ihold_delay);
+    
+    // Configurar tiempo de transición
+    success &= tmc2208_set_tpowerdown(motor, tpowerdown);
+    
+    return success;
 }

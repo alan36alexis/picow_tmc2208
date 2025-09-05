@@ -16,7 +16,8 @@ int main() {
 
     TMC2208_t motor1;
 
-    tmc2208_init(&motor1, MOTOR_STEP_PIN, MOTOR_DIR_PIN, MOTOR_ENA_PIN, MOTOR_STEPS_PER_REV, MOTOR_MICROSTEPS);
+    // Inicialización básica sin UART (para compatibilidad)
+    tmc2208_init(&motor1, MOTOR_STEP_PIN, MOTOR_DIR_PIN, MOTOR_ENA_PIN, MOTOR_STEPS_PER_REV, MOTOR_MICROSTEPS, NULL, 0, 0, 0);
     sleep_ms(200);
 
     tmc2208_enable(&motor1, true);

@@ -8,8 +8,8 @@
             "request": "launch",
             "type": "cortex-debug",
             "servertype": "openocd",
-            "serverpath": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd.exe",
-            "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
+            "serverpath": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd",
+            "gdbPath": "${userHome}/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gdb",
             "device": "${command:raspberry-pi-pico.getChipUppercase}",
             "configFiles": [
                 "interface/cmsis-dap.cfg",
