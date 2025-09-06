@@ -3,9 +3,11 @@
 
 // --- Configuracion ---
 // Deficino de pines
-#define MOTOR_STEP_PIN 14
-#define MOTOR_DIR_PIN  15
-#define MOTOR_ENA_PIN  16
+#define MOTOR_STEP_PIN 3
+#define MOTOR_DIR_PIN  2
+#define MOTOR_ENA_PIN  8
+#define MOTOR_MS1_PIN  7
+#define MOTOR_MS2_PIN  6
 
 // Parámetros de resolucion
 #define MOTOR_STEPS_PER_REV 200
@@ -16,7 +18,7 @@ int main() {
 
     TMC2208_t motor1;
 
-    tmc2208_init(&motor1, MOTOR_STEP_PIN, MOTOR_DIR_PIN, MOTOR_ENA_PIN, MOTOR_STEPS_PER_REV, MOTOR_MICROSTEPS);
+    tmc2208_init(&motor1, MOTOR_STEP_PIN, MOTOR_DIR_PIN, MOTOR_ENA_PIN, MOTOR_STEPS_PER_REV, MOTOR_MICROSTEPS, MOTOR_MS1_PIN, MOTOR_MS2_PIN);
     sleep_ms(200);
 
     tmc2208_enable(&motor1, true);

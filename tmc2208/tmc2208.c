@@ -38,11 +38,13 @@ bool repeating_timer_callback(struct repeating_timer *t) {
     return false; // Detener si el puntero no es válido
 }
 
-void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps) {
+void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps, uint8_t ms1_pin, uint8_t ms2_pin) {
     // Guardar la configuración en la estructura
     motor->step_pin = step_pin;
     motor->dir_pin = dir_pin;
     motor->enable_pin = enable_pin;
+    motor->ms1_pin = ms1_pin;
+    motor->ms2_pin = ms2_pin;
     motor->steps_per_rev = steps_per_rev;
     motor->microsteps = microsteps;
     motor->alarm_id = -1; // Inicialmente no hay temporizador activo
@@ -69,6 +71,46 @@ void tmc2208_enable(TMC2208_t *motor, bool enable) {
     // El pin ENA es activo a nivel bajo
     gpio_put(motor->enable_pin, !enable);
     sleep_ms(2);
+}
+
+void tmc2208_set_microstepping_by_pins(TMC2208_t *motor, TMC2208_Microsteps_t microsteps) {
+    if (!motor) return;
+
+    // Inicializar pines como salida
+    gpio_init(motor->ms1_pin);
+    gpio_set_dir(motor->ms1_pin, GPIO_OUT);
+    gpio_init(motor->ms2_pin);
+    gpio_set_dir(motor->ms2_pin, GPIO_OUT);
+
+    bool ms1 = 0, ms2 = 0;
+
+    switch (microsteps) {
+        case TMC2208_MICROSTEPS_1:
+            ms1 = 0; ms2 = 0;
+            motor->microsteps = 1;
+            break;
+        case TMC2208_MICROSTEPS_2:
+            ms1 = 1; ms2 = 0;
+            motor->microsteps = 2;
+            break;
+        case TMC2208_MICROSTEPS_4:
+            ms1 = 0; ms2 = 1;
+            motor->microsteps = 4;
+            break;
+        case TMC2208_MICROSTEPS_16:
+            ms1 = 1; ms2 = 1;
+            motor->microsteps = 16;
+            break;
+        default:
+            printf("⚠️ Microstepping %d no soportado por pines. Usar UART.\n", microsteps);
+            return;
+    }
+
+    gpio_put(motor->ms1_pin, ms1);
+    gpio_put(motor->ms2_pin, ms2);
+
+    printf("Microstepping configurado por pines: %d (MS1=%d, MS2=%d)\n",
+           motor->microsteps, ms1, ms2);
 }
 
 void tmc2208_set_direction(TMC2208_t *motor, bool direction) {
