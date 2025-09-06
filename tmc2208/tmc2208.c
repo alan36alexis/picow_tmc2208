@@ -12,6 +12,11 @@
 // Para múltiples motores, se requeriría un diseño más avanzado (ej. un array de punteros).
 static TMC2208_t *_motor_ptr_for_callback;
 
+// Tabla de conversión: índice = valor MRES, contenido = microsteps reales
+static const uint16_t microstep_table[9] = {
+    256, 128, 64, 32, 16, 8, 4, 2, 1
+};
+
 /**
  * @brief Callback del temporizador. Se ejecuta a intervalos regulares para generar los pulsos STEP.
  * Simplemente invierte el estado del pin STEP.
@@ -21,6 +26,7 @@ bool repeating_timer_callback(struct repeating_timer *t) {
         if(_motor_ptr_for_callback->mode == TMC2208_MODE_NSTEPS) {
             _motor_ptr_for_callback->nsteps--;
             if (_motor_ptr_for_callback->nsteps == 0) {
+                printf("Mode: %d\n", _motor_ptr_for_callback->mode);
                 // Si se han completado los pasos, detener el motor
                 tmc2208_stop(_motor_ptr_for_callback);
                 return false; // Detener el temporizador
@@ -28,19 +34,22 @@ bool repeating_timer_callback(struct repeating_timer *t) {
             else {
                 // Invierte el pin STEP
                 gpio_put(_motor_ptr_for_callback->step_pin, !gpio_get(_motor_ptr_for_callback->step_pin));
+                //printf("Mode: %d\n", _motor_ptr_for_callback->mode);
                 return true; // Mantener el temporizador en ejecución
             }
         }
         else if (_motor_ptr_for_callback->mode == TMC2208_MODE_RUN_CW || _motor_ptr_for_callback->mode == TMC2208_MODE_RUN_CCW) {
             // Invierte el pin STEP
+            //printf("Mode: %d\n", _motor_ptr_for_callback->mode);
             gpio_put(_motor_ptr_for_callback->step_pin, !gpio_get(_motor_ptr_for_callback->step_pin));
+            
             return true; // Mantener el temporizador en ejecución
         }
     }
     return false; // Detener si el puntero no es válido
 }
 
-void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps, uart_inst_t *uart_instance, uint8_t uart_tx_pin, uint8_t uart_rx_pin, uint8_t uart_address) {
+void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint16_t microsteps, uart_inst_t *uart_instance, uint8_t uart_tx_pin, uint8_t uart_rx_pin, uint8_t uart_address) {
     // Guardar la configuración en la estructura
     motor->step_pin = step_pin;
     motor->dir_pin = dir_pin;
@@ -83,6 +92,47 @@ void tmc2208_enable(TMC2208_t *motor, bool enable) {
     gpio_put(motor->enable_pin, !enable);
     sleep_ms(2);
 }
+
+void tmc2208_set_microstepping_by_pins(TMC2208_t *motor, TMC2208_Microsteps_t microsteps) {
+    if (!motor) return;
+
+    // Inicializar pines como salida
+    gpio_init(motor->ms1_pin);
+    gpio_set_dir(motor->ms1_pin, GPIO_OUT);
+    gpio_init(motor->ms2_pin);
+    gpio_set_dir(motor->ms2_pin, GPIO_OUT);
+
+    bool ms1 = 0, ms2 = 0;
+
+    switch (microsteps) {
+        case TMC2208_MICROSTEPS_1:
+            ms1 = 0; ms2 = 0;
+            motor->microsteps = 1;
+            break;
+        case TMC2208_MICROSTEPS_2:
+            ms1 = 1; ms2 = 0;
+            motor->microsteps = 2;
+            break;
+        case TMC2208_MICROSTEPS_4:
+            ms1 = 0; ms2 = 1;
+            motor->microsteps = 4;
+            break;
+        case TMC2208_MICROSTEPS_16:
+            ms1 = 1; ms2 = 1;
+            motor->microsteps = 16;
+            break;
+        default:
+            printf("⚠️ Microstepping %d no soportado por pines. Usar UART.\n", microsteps);
+            return;
+    }
+
+    gpio_put(motor->ms1_pin, ms1);
+    gpio_put(motor->ms2_pin, ms2);
+
+    printf("Microstepping configurado por pines: %d (MS1=%d, MS2=%d)\n",
+           motor->microsteps, ms1, ms2);
+}
+
 
 void tmc2208_set_direction(TMC2208_t *motor, bool direction) {
     motor->direction = direction;
@@ -292,14 +342,14 @@ bool tmc2208_uart_write_register(TMC2208_t *motor, uint8_t register_address, uin
     // Construir paquete de escritura
     tmc2208_build_uart_packet(motor->uart_address, register_address, data, false, packet);
     
-    // Enviar paquete
+    // Enviar paquete completo
     for (int i = 0; i < 8; i++) {
         uart_putc_raw(motor->uart_instance, packet[i]);
     }
-    
-    // Pequeña pausa para procesamiento
-    sleep_ms(1);
-    
+
+    // Asegurar vaciado del buffer TX
+    uart_tx_wait_blocking(motor->uart_instance);
+
     return true;
 }
 
@@ -318,16 +368,48 @@ bool tmc2208_set_microstepping(TMC2208_t *motor, TMC2208_Microsteps_t microsteps
     // Limpiar bits de microstepping y establecer nuevo valor
     chopconf &= ~TMC2208_CHOPCONF_MRES_MASK;
     chopconf |= (microsteps & TMC2208_CHOPCONF_MRES_MASK);
+    // chopconf &= ~TMC2208_CHOPCONF_MRES_MASK;
+    // chopconf |= (microsteps << 24);
+
+    printf("CHOPCONF modificado: 0x%08X\n", chopconf);
+    
     
     // Escribir registro modificado
     if (!tmc2208_uart_write_register(motor, TMC2208_REG_CHOPCONF, chopconf)) {
         return false;
     }
     
-    // Actualizar valor en la estructura
-    motor->microsteps = (1 << microsteps);
+    // Guardar valor real en la estructura
+    if (microsteps <= 8) {
+        motor->microsteps = microstep_table[microsteps];
+    } else {
+        motor->microsteps = 256; // fallback
+    }
     
     return true;
+}
+
+uint16_t tmc2208_get_microstepping(TMC2208_t *motor) {
+    if (motor->uart_instance == NULL) {
+        return 0; // error
+    }
+
+    uint32_t chopconf;
+
+    // Leer el registro CHOPCONF
+    if (!tmc2208_uart_read_register(motor, TMC2208_REG_CHOPCONF, &chopconf)) {
+        return 0; // error
+    }
+
+    // Extraer el campo MRES (bits 24..27)
+    uint8_t mres = (chopconf >> 24) & 0x0F;
+
+    // Validar rango y devolver microsteps reales
+    if (mres <= 8) {
+        return microstep_table[mres];
+    }
+
+    return 0; // valor inválido
 }
 
 bool tmc2208_set_currents(TMC2208_t *motor, uint8_t irun, uint8_t ihold, uint8_t ihold_delay) {
@@ -406,4 +488,141 @@ bool tmc2208_configure_all(TMC2208_t *motor, TMC2208_Microsteps_t microsteps, ui
     success &= tmc2208_set_tpowerdown(motor, tpowerdown);
     
     return success;
+}
+
+int tmc2208_read_chopconf(TMC2208_t *motor, uint32_t *chopconf)
+{
+    if (!motor || !chopconf) {
+        return -1; // error de punteros
+    }
+
+    uint32_t val = 0;
+    int status = tmc2208_uart_read_register(motor, TMC2208_REG_CHOPCONF, &val);
+    if (status < 0) {
+        return status; // error de lectura
+    }
+
+    *chopconf = val;
+    printf("CHOPCONF leido: 0x%08X\n", val);
+
+    return 0;
+}
+
+void tmc2208_debug_chopconf(TMC2208_t *motor)
+{
+    uint32_t chopconf;
+    if (!tmc2208_uart_read_register(motor, TMC2208_REG_CHOPCONF, &chopconf)) {
+        printf("Error leyendo CHOPCONF\n");
+        return;
+    }
+
+    printf("CHOPCONF = 0x%08X\n", chopconf);
+
+    uint8_t mres   = (chopconf >> 24) & 0x0F;
+    uint8_t toff   = (chopconf >> 0) & 0x0F;
+    uint8_t hstrt  = (chopconf >> 4) & 0x07;
+    uint8_t hend   = (chopconf >> 7) & 0x0F;
+    uint8_t intpol = (chopconf >> 28) & 0x01;
+    uint8_t dedge  = (chopconf >> 29) & 0x01;
+
+    int microsteps = 256 >> mres;
+
+    printf("  Microstepping: %d (MRES=%d)\n", microsteps, mres);
+    printf("  TOFF        : %d\n", toff);
+    printf("  HSTRT       : %d\n", hstrt);
+    printf("  HEND        : %d\n", hend);
+    printf("  INTPOL      : %s\n", intpol ? "ON" : "OFF");
+    printf("  DEDGE       : %s\n", dedge ? "ON" : "OFF");
+}
+
+bool tmc2208_set_chopconf(TMC2208_t *motor,
+                          TMC2208_Microsteps_t microsteps,
+                          uint8_t toff,
+                          uint8_t hstrt,
+                          uint8_t hend,
+                          bool intpol,
+                          bool dedge)
+{
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    // Codificar MRES (bits 27..24), se guarda como log2(256/microsteps)
+    uint8_t mres = 0;
+    switch (microsteps) {
+        case TMC2208_MICROSTEPS_1:   
+            mres = 8; 
+            break;
+        case TMC2208_MICROSTEPS_2:   
+            mres = 7; 
+            break;
+        case TMC2208_MICROSTEPS_4:   
+            mres = 6; 
+            break;
+        case TMC2208_MICROSTEPS_8:   
+            mres = 5; 
+            break;
+        case TMC2208_MICROSTEPS_16:  
+            mres = 4; 
+            break;
+        case TMC2208_MICROSTEPS_32:  
+            mres = 3; 
+            break;
+        case TMC2208_MICROSTEPS_64:  
+            mres = 2; 
+            break;
+        case TMC2208_MICROSTEPS_128: 
+            mres = 1; 
+            break;
+        case TMC2208_MICROSTEPS_256: 
+            mres = 0; 
+            break;
+        default: 
+            mres = 0; 
+            break;
+    }
+
+    uint32_t chopconf = 0;
+    chopconf |= (toff   & 0x0F);          // TOFF[3:0]
+    chopconf |= (hstrt  & 0x07) << 4;     // HSTRT[2:0]
+    chopconf |= (hend   & 0x0F) << 7;     // HEND[3:0]
+    chopconf |= (mres   & 0x0F) << 24;    // MRES[3:0]
+    chopconf |= (intpol ? 1U : 0U) << 28; // INTPOL
+    chopconf |= (dedge  ? 1U : 0U) << 29; // DEDGE
+
+    // Escribir al TMC2209
+    if (!tmc2208_uart_write_register(motor, TMC2208_REG_CHOPCONF, chopconf)) {
+        return false;
+    }
+
+    // Guardar en la estructura interna
+    motor->microsteps = (1 << microsteps);
+
+    printf("CHOPCONF seteado: 0x%08X\n", chopconf);
+
+    return true;
+}
+
+bool tmc2208_disable_pdn_uart(TMC2208_t *motor) {
+    if (motor->uart_instance == NULL) {
+        return false;
+    }
+
+    uint32_t gconf = 0;
+
+    // Leer el GCONF actual
+    if (!tmc2208_uart_read_register(motor, TMC2208_REG_GCONF, &gconf)) {
+        return false;
+    }
+
+    // Limpiar el bit pdn_disable (bit 6)
+    gconf &= ~(1 << 6);
+
+    // Escribir el nuevo valor
+    if (!tmc2208_uart_write_register(motor, TMC2208_REG_GCONF, gconf)) {
+        return false;
+    }
+
+    printf("PDN_UART deshabilitado. GCONF=0x%08X\n", gconf);
+    return true;
 }
