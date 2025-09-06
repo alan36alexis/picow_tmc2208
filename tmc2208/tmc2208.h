@@ -50,6 +50,8 @@
 
 // Máscaras para registros específicos
 #define TMC2208_CHOPCONF_MRES_MASK    0x0F
+//#define TMC2208_CHOPCONF_MRES_MASK (0x0F << 24)
+
 #define TMC2208_CHOPCONF_INTPOL_MASK  0x10
 #define TMC2208_CHOPCONF_DEDGE_MASK   0x20
 #define TMC2208_CHOPCONF_MRES_SHIFT   0
@@ -65,15 +67,15 @@
 
 // Valores de microstepping
 typedef enum {
-    TMC2208_MICROSTEPS_1 = 0,
-    TMC2208_MICROSTEPS_2 = 1,
-    TMC2208_MICROSTEPS_4 = 2,
-    TMC2208_MICROSTEPS_8 = 3,
+    TMC2208_MICROSTEPS_1 = 8,
+    TMC2208_MICROSTEPS_2 = 7,
+    TMC2208_MICROSTEPS_4 = 6,
+    TMC2208_MICROSTEPS_8 = 5,
     TMC2208_MICROSTEPS_16 = 4,
-    TMC2208_MICROSTEPS_32 = 5,
-    TMC2208_MICROSTEPS_64 = 6,
-    TMC2208_MICROSTEPS_128 = 7,
-    TMC2208_MICROSTEPS_256 = 8
+    TMC2208_MICROSTEPS_32 = 3,
+    TMC2208_MICROSTEPS_64 = 2,
+    TMC2208_MICROSTEPS_128 = 1,
+    TMC2208_MICROSTEPS_256 = 0
 } TMC2208_Microsteps_t;
 
 typedef enum {
@@ -92,10 +94,12 @@ typedef struct {
     uint8_t step_pin;
     uint8_t dir_pin;
     uint8_t enable_pin;
+    uint8_t ms1_pin; // Pin para configuración de microstepping (si se usa)
+    uint8_t ms2_pin; // Pin para configuración de microstepping (si se
 
     // Parámetros del motor
     uint16_t steps_per_rev;
-    uint8_t microsteps;
+    uint16_t microsteps;
 
     // Configuración UART
     uart_inst_t *uart_instance;
@@ -125,7 +129,7 @@ typedef struct {
  * @param uart_rx_pin Pin GPIO para RX UART.
  * @param uart_address Dirección UART del driver (0-3).
  */
-void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps, uart_inst_t *uart_instance, uint8_t uart_tx_pin, uint8_t uart_rx_pin, uint8_t uart_address);
+void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint16_t microsteps, uart_inst_t *uart_instance, uint8_t uart_tx_pin, uint8_t uart_rx_pin, uint8_t uart_address);
 
 /**
  * @brief Habilita o deshabilita el driver del motor.
@@ -134,6 +138,8 @@ void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t e
  * @param enable true para habilitar (energizar), false para deshabilitar.
  */
 void tmc2208_enable(TMC2208_t *motor, bool enable);
+
+void tmc2208_set_microstepping_by_pins(TMC2208_t *motor, TMC2208_Microsteps_t microsteps);
 
 /**
  * @brief Establece la dirección de rotación.
@@ -274,5 +280,26 @@ bool tmc2208_get_status(TMC2208_t *motor, uint32_t *gstat);
  * @return true si la configuración fue exitosa, false en caso contrario.
  */
 bool tmc2208_configure_all(TMC2208_t *motor, TMC2208_Microsteps_t microsteps, uint8_t irun, uint8_t ihold, uint8_t ihold_delay, uint8_t tpowerdown);
+
+uint16_t tmc2208_get_microstepping(TMC2208_t *motor); 
+
+/**
+ * @brief Lee el registro CHOPCONF del TMC2209
+ * 
+ * @param tmc puntero a la estructura de configuración TMC2209
+ * @param chopconf puntero donde se almacena el valor leído
+ * @return int 0 si ok, <0 si error
+ */
+int tmc2208_read_chopconf(TMC2208_t *motor, uint32_t *chopconf);
+
+void tmc2208_debug_chopconf(TMC2208_t *motor);
+
+bool tmc2208_set_chopconf(TMC2208_t *motor,
+                          TMC2208_Microsteps_t microsteps,
+                          uint8_t toff,
+                          uint8_t hstrt,
+                          uint8_t hend,
+                          bool intpol,
+                          bool dedge);
 
 #endif // TMC2208_H
