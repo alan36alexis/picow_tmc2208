@@ -3,9 +3,9 @@
 
 // --- Configuracion ---
 // Deficino de pines
-#define MOTOR_STEP_PIN 14
-#define MOTOR_DIR_PIN  15
-#define MOTOR_ENA_PIN  16
+#define MOTOR_STEP_PIN 2
+#define MOTOR_DIR_PIN  3
+#define MOTOR_ENA_PIN  8
 
 // Parámetros de resolucion
 #define MOTOR_STEPS_PER_REV 200
