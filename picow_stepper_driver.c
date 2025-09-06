@@ -22,6 +22,7 @@ int main() {
     sleep_ms(200);
 
     tmc2208_enable(&motor1, true);
+    tmc2208_set_microstepping_by_pins(&motor1, MOTOR_MICROSTEPS);
     // tmc2208_set_direction(&motor1, true);
     // tmc2208_set_rpm(&motor1, 60);
 
@@ -31,9 +32,9 @@ int main() {
         //reaccion: durante 500 ms hay pulsos en step_pin y durante 500 ms no hay pulsos
 
         tmc2208_set_direction(&motor1, true);
-        tmc2208_send_nsteps_at_freq(&motor1, 10, 20.0f); // Enviar 500 pasos a 1000 Hz
+        tmc2208_send_nsteps_at_freq(&motor1, 1600, 1000.0f); // Enviar 500 pasos a 1000 Hz
 
-        sleep_ms(1000);
+        sleep_ms(5000);
     }
 
     return 0;
