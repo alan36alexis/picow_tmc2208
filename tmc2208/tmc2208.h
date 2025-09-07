@@ -22,6 +22,8 @@ typedef struct {
     uint8_t step_pin;
     uint8_t dir_pin;
     uint8_t enable_pin;
+    uint8_t ms1_pin;
+    uint8_t ms2_pin;
 
     // Parámetros del motor
     uint16_t steps_per_rev;
@@ -35,6 +37,19 @@ typedef struct {
     uint64_t nsteps; // Número de pasos restantes para el callback 
 } TMC2208_t;
 
+// Valores de microstepping
+typedef enum {
+    TMC2208_MICROSTEPS_1 = 8,
+    TMC2208_MICROSTEPS_2 = 7,
+    TMC2208_MICROSTEPS_4 = 6,
+    TMC2208_MICROSTEPS_8 = 5,
+    TMC2208_MICROSTEPS_16 = 4,
+    TMC2208_MICROSTEPS_32 = 3,
+    TMC2208_MICROSTEPS_64 = 2,
+    TMC2208_MICROSTEPS_128 = 1,
+    TMC2208_MICROSTEPS_256 = 0
+} TMC2208_Microsteps_t;
+
 /**
  * @brief Inicializa el driver TMC2208 y los pines GPIO correspondientes.
  *
@@ -45,7 +60,7 @@ typedef struct {
  * @param steps_per_rev Pasos completos por revolución del motor (ej: 200).
  * @param microsteps Micropasos configurados en el driver (ej: 16).
  */
-void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps);
+void tmc2208_init(TMC2208_t *motor, uint8_t step_pin, uint8_t dir_pin, uint8_t enable_pin, uint16_t steps_per_rev, uint8_t microsteps, uint8_t ms1_pin, uint8_t ms2_pin);
 
 /**
  * @brief Habilita o deshabilita el driver del motor.
@@ -104,5 +119,11 @@ void tmc2208_stop_and_disable(TMC2208_t *motor);
  * @param freq Frecuencia en Hz a la que se enviarán los pasos.
  */
 void tmc2208_send_nsteps_at_freq(TMC2208_t *motor, int nsteps, float freq);
+
+void tmc2208_set_microstepping_by_pins(TMC2208_t *motor, TMC2208_Microsteps_t microsteps);
+
+bool tmc2208_is_moving(TMC2208_t *motor);
+
+TMC2208_Mode_t tmc2208_get_mode(TMC2208_t *motor);
 
 #endif // TMC2208_H
